@@ -12,9 +12,9 @@ import (
 	"github.com/pengtang1024/kore/pkg/pluginapi"
 )
 
-// embeddedInfo 是随二进制发布的内嵌清单，握手字段与 info.json 同源。
+// embeddedInfo 是随二进制发布的内嵌清单 manifest.json（只含握手字段，不含 size_bytes）。
 //
-//go:embed info.json
+//go:embed manifest.json
 var embeddedInfo []byte
 
 // manifest 是 info.json 中插件运行期需要的字段。
@@ -49,11 +49,11 @@ type config struct {
 	defaultShell string
 }
 
-// loadConfig 读取协议环境变量、终端参数并解析内嵌 info.json。
+// loadConfig 读取协议环境变量、终端参数并解析内嵌 manifest.json。
 func loadConfig() (config, error) {
 	var m manifest
 	if err := json.Unmarshal(embeddedInfo, &m); err != nil {
-		return config{}, fmt.Errorf("解析内嵌 info.json: %w", err)
+		return config{}, fmt.Errorf("解析内嵌 manifest.json: %w", err)
 	}
 	if m.Protocol != pluginapi.Protocol {
 		return config{}, fmt.Errorf("info.json.protocol=%q 与 SDK 协议 %q 不一致", m.Protocol, pluginapi.Protocol)
