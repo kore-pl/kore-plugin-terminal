@@ -1,0 +1,17 @@
+{
+  "id": "terminal",
+  "name": "Web 终端插件",
+  "version": "0.1.0",
+  "protocol": "kore.plugin.v1",
+  "lifecycle": "resident",
+  "depth_level": "production",
+  "entry": "bin/terminal",
+  "capabilities": ["system:admin", "proc:write"],
+  "triggers": [],
+  "requires_kore": ">=0.1.0 <0.2.0",
+  "resources": {"memory_mb": 12, "cpu_quota": "25%", "pids_max": 64},
+  "depends_on": [],
+  "conflicts": [],
+  "scenario_tags": ["ops"],
+  "size_bytes": 0
+}
