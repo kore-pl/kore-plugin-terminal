@@ -1,7 +1,7 @@
 {
   "id": "terminal",
   "name": "Web 终端插件",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "protocol": "kore.plugin.v1",
   "lifecycle": "resident",
   "depth_level": "production",
