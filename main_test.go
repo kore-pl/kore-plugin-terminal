@@ -17,9 +17,9 @@ import (
 func testConfig() config {
 	return config{
 		id:           "terminal",
-		version:      "0.1.0",
+		version:      "0.2.0",
 		requiresKore: ">=0.1.0 <0.2.0",
-		capabilities: []string{"system:admin", "proc:write"},
+		capabilities: []string{"system:read", "system:admin", "proc:write"},
 		startedAt:    time.Now(),
 		maxSessions:  4,
 		idleTimeout:  time.Minute,
@@ -86,13 +86,13 @@ func TestHandshake(t *testing.T) {
 	if params.PluginID != "terminal" || params.ID != "terminal" {
 		t.Fatalf("plugin_id/id=%q/%q，期望 terminal", params.PluginID, params.ID)
 	}
-	if params.Protocol != pluginapi.Protocol || params.Version != "0.1.0" {
+	if params.Protocol != pluginapi.Protocol || params.Version != "0.2.0" {
 		t.Fatalf("protocol/version=%q/%q 不符合 §5", params.Protocol, params.Version)
 	}
 	if params.PID != os.Getpid() {
 		t.Fatalf("pid=%d，期望 %d", params.PID, os.Getpid())
 	}
-	if len(params.Capabilities) != 2 || params.Capabilities[0] != "system:admin" {
+	if len(params.Capabilities) != 3 || params.Capabilities[0] != "system:read" {
 		t.Fatalf("capabilities 不符: %+v", params.Capabilities)
 	}
 	result, err := json.Marshal(helloResult{OK: true, Protocol: pluginapi.Protocol})

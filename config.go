@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/pengtang1024/kore-plugin-terminal/internal/terminal"
 	"github.com/pengtang1024/kore/pkg/pluginapi"
 )
 
@@ -47,6 +49,9 @@ type config struct {
 	maxSessions  int
 	idleTimeout  time.Duration
 	defaultShell string
+	replayBytes  int
+	historyDir   string
+	history      terminal.HistoryOptions
 }
 
 // loadConfig 读取协议环境变量、终端参数并解析内嵌 manifest.json。
@@ -69,7 +74,10 @@ func loadConfig() (config, error) {
 		maxSessions:  envLimitedInt("KORE_TERMINAL_MAX_SESSIONS", defaultMaxSessions, maxSessionsLimit),
 		idleTimeout:  time.Duration(envLimitedInt("KORE_TERMINAL_IDLE_SEC", defaultIdleSec, maxIdleSec)) * time.Second,
 		defaultShell: envString("KORE_TERMINAL_SHELL", defaultShell),
+		replayBytes:  envLimitedInt("KORE_TERMINAL_REPLAY_BYTES", terminal.DefaultReplayBytes, terminal.MaxReplayBytes),
 	}
+	cfg.history = loadHistoryOptions()
+	cfg.historyDir = cfg.history.Dir
 	if cfg.id == "" {
 		cfg.id = m.ID
 	}
@@ -77,6 +85,22 @@ func loadConfig() (config, error) {
 		return config{}, fmt.Errorf("缺少环境变量 KORE_PLUGIN_SOCK")
 	}
 	return cfg, nil
+}
+
+// loadHistoryOptions 组装命令历史配置：KORE_STATE_DIR 缺省或显式 off 时停用（不落盘）。
+func loadHistoryOptions() terminal.HistoryOptions {
+	opts := terminal.HistoryOptions{
+		MaxEntries:    envLimitedInt("KORE_TERMINAL_HISTORY_MAX", terminal.DefaultHistoryEntries, terminal.MaxHistoryEntries),
+		MaxEntryBytes: envLimitedInt("KORE_TERMINAL_HISTORY_ENTRY_BYTES", terminal.DefaultHistoryEntryBytes, terminal.MaxHistoryEntryBytes),
+		MaxSessions:   envLimitedInt("KORE_TERMINAL_HISTORY_SESSIONS", terminal.DefaultHistorySessions, terminal.MaxHistorySessions),
+	}
+	stateDir := strings.TrimSpace(os.Getenv("KORE_STATE_DIR"))
+	if stateDir == "" || !envBool("KORE_TERMINAL_HISTORY", true) {
+		opts.Disabled = true
+		return opts
+	}
+	opts.Dir = filepath.Join(stateDir, "history")
+	return opts
 }
 
 // envLimitedInt 读取正整数环境变量：未设置或非法取默认值，超上限截断。
@@ -101,4 +125,19 @@ func envString(key, def string) string {
 		return value
 	}
 	return def
+}
+
+// envBool 读取布尔环境变量：off/false/0/no 为假，其余（含空）取默认值。
+func envBool(key string, def bool) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch raw {
+	case "":
+		return def
+	case "off", "false", "0", "no", "disabled":
+		return false
+	case "on", "true", "1", "yes", "enabled":
+		return true
+	default:
+		return def
+	}
 }

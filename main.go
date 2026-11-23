@@ -39,10 +39,15 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	logger.Info("hello 完成", "plugin_id", cfg.id, "version", cfg.version)
+	if cfg.historyDir == "" {
+		logger.Warn("命令历史未启用：KORE_STATE_DIR 未设置或 KORE_TERMINAL_HISTORY=off，write 输入不落盘")
+	}
 	manager := terminal.New(terminal.Options{
 		MaxSessions: cfg.maxSessions,
 		IdleTimeout: cfg.idleTimeout,
 		Shell:       cfg.defaultShell,
+		ReplayBytes: cfg.replayBytes,
+		History:     cfg.history,
 	})
 	defer manager.CloseAll()
 	return serve(conn, cfg, manager, logger)

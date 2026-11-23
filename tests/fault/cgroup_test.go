@@ -14,28 +14,28 @@ import (
 // TestCgroupFaultMethods 断言 cgroup 资源受限时方法回 ErrResource，list 只读仍可用。
 func TestCgroupFaultMethods(t *testing.T) {
 	manager := newManager(t, 2)
-	info, err := manager.Create(context.Background(), "", 80, 24)
+	info, err := manager.Create(context.Background(), "", "", 80, 24)
 	if err != nil {
 		t.Fatalf("create 失败: %v", err)
 	}
 	manager.InjectFault(terminal.FaultCgroup)
-	if _, err := manager.Create(context.Background(), "", 80, 24); !errors.Is(err, terminal.ErrResource) {
+	if _, err := manager.Create(context.Background(), "", "", 80, 24); !errors.Is(err, terminal.ErrResource) {
 		t.Fatalf("create 错误=%v，期望 ErrResource", err)
 	}
-	if _, err := manager.Read(context.Background(), info.SessionID, 1024); !errors.Is(err, terminal.ErrResource) {
+	if _, err := manager.Read(context.Background(), "", info.SessionID, nil, 1024); !errors.Is(err, terminal.ErrResource) {
 		t.Fatalf("read 错误=%v，期望 ErrResource", err)
 	}
-	if _, err := manager.Write(context.Background(), info.SessionID, []byte("x")); !errors.Is(err, terminal.ErrResource) {
+	if _, err := manager.Write(context.Background(), "", info.SessionID, []byte("x")); !errors.Is(err, terminal.ErrResource) {
 		t.Fatalf("write 错误=%v，期望 ErrResource", err)
 	}
-	if err := manager.Resize(context.Background(), info.SessionID, 100, 40); !errors.Is(err, terminal.ErrResource) {
+	if err := manager.Resize(context.Background(), "", info.SessionID, 100, 40); !errors.Is(err, terminal.ErrResource) {
 		t.Fatalf("resize 错误=%v，期望 ErrResource", err)
 	}
-	if listed := manager.List(); len(listed) != 1 {
+	if listed := manager.List(""); len(listed) != 1 {
 		t.Fatalf("list 应只读可用且返回 1 个会话: %+v", listed)
 	}
 	// 清理路径不受资源故障阻断。
-	if err := manager.Close(context.Background(), info.SessionID); err != nil {
+	if err := manager.Close(context.Background(), "", info.SessionID); err != nil {
 		t.Fatalf("故障下 close 失败: %v", err)
 	}
 	waitPidGone(t, info.PID, 3*time.Second)
@@ -45,11 +45,11 @@ func TestCgroupFaultMethods(t *testing.T) {
 func TestCgroupClearedRecovers(t *testing.T) {
 	manager := newManager(t, 2)
 	manager.InjectFault(terminal.FaultCgroup)
-	if _, err := manager.Create(context.Background(), "", 80, 24); !errors.Is(err, terminal.ErrResource) {
+	if _, err := manager.Create(context.Background(), "", "", 80, 24); !errors.Is(err, terminal.ErrResource) {
 		t.Fatalf("故障下 create 错误=%v", err)
 	}
 	manager.InjectFault(terminal.FaultNone)
-	if _, err := manager.Create(context.Background(), "", 80, 24); err != nil {
+	if _, err := manager.Create(context.Background(), "", "", 80, 24); err != nil {
 		t.Fatalf("清除故障后 create 失败: %v", err)
 	}
 }
@@ -63,10 +63,10 @@ func TestCgroupFaultNoPanic(t *testing.T) {
 	}()
 	manager := newManager(t, 2)
 	manager.InjectFault(terminal.FaultCgroup)
-	_, _ = manager.Create(context.Background(), "", 80, 24)
-	_, _ = manager.Read(context.Background(), "t-missing", 1024)
-	_, _ = manager.Write(context.Background(), "t-missing", []byte("x"))
-	_ = manager.Resize(context.Background(), "t-missing", 80, 24)
-	_ = manager.Close(context.Background(), "t-missing")
-	_ = manager.List()
+	_, _ = manager.Create(context.Background(), "", "", 80, 24)
+	_, _ = manager.Read(context.Background(), "", "t-missing", nil, 1024)
+	_, _ = manager.Write(context.Background(), "", "t-missing", []byte("x"))
+	_ = manager.Resize(context.Background(), "", "t-missing", 80, 24)
+	_ = manager.Close(context.Background(), "", "t-missing")
+	_ = manager.List("")
 }

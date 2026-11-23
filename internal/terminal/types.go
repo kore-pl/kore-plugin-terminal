@@ -30,6 +30,10 @@ var (
 	ErrRateLimit = errors.New("terminal: 会话数已达上限")
 	// ErrUnsupported 表示当前平台不支持 PTY（显式降级，不静默）。
 	ErrUnsupported = errors.New("terminal: 当前平台不支持 PTY")
+	// ErrForbidden 表示调用方不是会话创建者：越权 attach / 读写 / 关闭一律拒绝。
+	ErrForbidden = errors.New("terminal: 会话不属于当前调用方")
+	// ErrCursorExpired 表示读游标早于补读窗口下界，已读内容无法续读（必须重新对齐）。
+	ErrCursorExpired = errors.New("terminal: 读游标已过期")
 )
 
 // Fault 是测试用故障注入枚举，生产路径默认 FaultNone。
@@ -65,6 +69,14 @@ const (
 	maxGeometry = 1000
 	// maxSessionsLimit 是 MaxSessions 的硬上限。
 	maxSessionsLimit = 64
+	// DefaultClientID 是未声明 client_id 时的调用方标识（保持既有 6 方法的旧语义）。
+	DefaultClientID = "default"
+	// maxClientIDLen 是 client_id 的长度上限。
+	maxClientIDLen = 64
+	// DefaultReplayBytes 是重连补读窗口的默认字节数（保留最近交付的输出）。
+	DefaultReplayBytes = 64 << 10
+	// MaxReplayBytes 是补读窗口的硬上限（4 MiB）。
+	MaxReplayBytes = 4 << 20
 )
 
 // Options 是 Manager 的运行参数；零值取默认值。
@@ -77,12 +89,18 @@ type Options struct {
 	ReadChunk int
 	// Shell 是 create 未指定 shell 时的默认登录 shell。
 	Shell string
+	// ReplayBytes 是重连补读窗口字节数，默认 64 KiB、硬上限 4 MiB。
+	ReplayBytes int
+	// History 是命令历史存储配置；Dir 为空（或 Disabled）时不落盘、不记录。
+	History HistoryOptions
 }
 
 // Info 是会话快照（对外 schema，字段显式）。
 type Info struct {
 	// SessionID 会话标识，形如 t-1a2b3c4d5e6f7a8b。
 	SessionID string `json:"session_id"`
+	// ClientID 是会话创建者标识；后续读写/关闭必须携带同一标识。
+	ClientID string `json:"client_id"`
 	// Shell 是登录 shell 的绝对路径。
 	Shell string `json:"shell"`
 	// PID 是 shell 进程 pid，同时也是进程组号（Setsid 后）。
@@ -93,8 +111,10 @@ type Info struct {
 	Rows int `json:"rows"`
 	// CreatedAt 是会话创建时间（RFC 3339 带纳秒）。
 	CreatedAt string `json:"created_at"`
-	// LastActive 是最近一次 create/write/read 触碰时间。
+	// LastActive 是最近一次 create/write/read/resize/attach 触碰时间。
 	LastActive string `json:"last_active"`
+	// Cursor 是当前输出游标（已交付字节数，单调递增）。
+	Cursor uint64 `json:"cursor"`
 	// EOF 表示 shell 已退出且输出已读完。
 	EOF bool `json:"eof"`
 }
@@ -105,6 +125,22 @@ type ReadResult struct {
 	Data []byte
 	// EOF 表示 shell 已退出且输出已读完。
 	EOF bool
+	// Cursor 是本次读取后的输出游标，客户端下次带它续读。
+	Cursor uint64
+	// Replay 表示本次是从补读窗口回放（非首次交付），用于客户端识别重连续读。
+	Replay bool
+}
+
+// Attached 是 attach 的结果：会话快照 + 游标可恢复性。
+type Attached struct {
+	// Info 是会话快照。
+	Info Info
+	// Cursor 是当前输出游标。
+	Cursor uint64
+	// ReplayBytes 是可补读窗口字节数（offset 与窗口下界之差）。
+	ReplayBytes int
+	// IdleExpiresAt 是按当前空闲阈值推算的回收时刻（RFC 3339 带纳秒）。
+	IdleExpiresAt string
 }
 
 // normalizeOptions 归一化零值参数。
@@ -127,7 +163,39 @@ func normalizeOptions(opts Options) Options {
 	if strings.TrimSpace(opts.Shell) == "" {
 		opts.Shell = "/bin/bash"
 	}
+	if opts.ReplayBytes <= 0 {
+		opts.ReplayBytes = DefaultReplayBytes
+	}
+	if opts.ReplayBytes > MaxReplayBytes {
+		opts.ReplayBytes = MaxReplayBytes
+	}
+	opts.History = normalizeHistoryOptions(opts.History)
 	return opts
+}
+
+// normalizeClientID 归一化调用方标识：空串取 default，其余做长度与字符集校验
+// （标识只作为插件内的逻辑归属标签，真正的认证边界在内核 capability）。
+func normalizeClientID(raw string) (string, error) {
+	clientID := strings.TrimSpace(raw)
+	if clientID == "" {
+		return DefaultClientID, nil
+	}
+	if len(clientID) > maxClientIDLen {
+		return "", fmt.Errorf("%w: client_id 最多 %d 字节", ErrInvalid, maxClientIDLen)
+	}
+	for _, r := range clientID {
+		valid := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			r == '-' || r == '_' || r == '.' || r == ':' || r == '@'
+		if !valid {
+			return "", fmt.Errorf("%w: client_id 仅允许字母、数字与 -_.:@", ErrInvalid)
+		}
+	}
+	return clientID, nil
+}
+
+// NormalizeClientID 归一化调用方标识（main 层参数校验与归属归一复用同一实现）。
+func NormalizeClientID(raw string) (string, error) {
+	return normalizeClientID(raw)
 }
 
 // validateSize 校验终端窗口尺寸。

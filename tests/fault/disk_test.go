@@ -16,7 +16,7 @@ import (
 func TestDiskFullCreateRejected(t *testing.T) {
 	manager := newManager(t, 2)
 	manager.InjectFault(terminal.FaultDiskFull)
-	if _, err := manager.Create(context.Background(), "", 80, 24); !errors.Is(err, terminal.ErrIO) {
+	if _, err := manager.Create(context.Background(), "", "", 80, 24); !errors.Is(err, terminal.ErrIO) {
 		t.Fatalf("create 错误=%v，期望 ErrIO", err)
 	}
 }
@@ -25,18 +25,18 @@ func TestDiskFullCreateRejected(t *testing.T) {
 // （方法级故障隔离，不是全局崩溃）。
 func TestDiskFullExistingSessionUnaffected(t *testing.T) {
 	manager := newManager(t, 2)
-	info, err := manager.Create(context.Background(), "", 80, 24)
+	info, err := manager.Create(context.Background(), "", "", 80, 24)
 	if err != nil {
 		t.Fatalf("create 失败: %v", err)
 	}
 	manager.InjectFault(terminal.FaultDiskFull)
-	if _, err := manager.Write(context.Background(), info.SessionID, []byte("printf 'kore-fault-%s\\n' ok\n")); err != nil {
+	if _, err := manager.Write(context.Background(), "", info.SessionID, []byte("printf 'kore-fault-%s\\n' ok\n")); err != nil {
 		t.Fatalf("故障下 write 失败: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	var output strings.Builder
 	for time.Now().Before(deadline) {
-		result, err := manager.Read(context.Background(), info.SessionID, 64<<10)
+		result, err := manager.Read(context.Background(), "", info.SessionID, nil, 64<<10)
 		if err != nil {
 			t.Fatalf("故障下 read 失败: %v", err)
 		}
@@ -56,11 +56,11 @@ func TestDiskFullExistingSessionUnaffected(t *testing.T) {
 func TestDiskFullClearedRecovers(t *testing.T) {
 	manager := newManager(t, 2)
 	manager.InjectFault(terminal.FaultDiskFull)
-	if _, err := manager.Create(context.Background(), "", 80, 24); !errors.Is(err, terminal.ErrIO) {
+	if _, err := manager.Create(context.Background(), "", "", 80, 24); !errors.Is(err, terminal.ErrIO) {
 		t.Fatalf("故障下 create 错误=%v，期望 ErrIO", err)
 	}
 	manager.InjectFault(terminal.FaultNone)
-	if _, err := manager.Create(context.Background(), "", 80, 24); err != nil {
+	if _, err := manager.Create(context.Background(), "", "", 80, 24); err != nil {
 		t.Fatalf("清除故障后 create 失败: %v", err)
 	}
 }

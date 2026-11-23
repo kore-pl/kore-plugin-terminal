@@ -16,10 +16,10 @@ import (
 func TestKilledCreateRejected(t *testing.T) {
 	manager := newManager(t, 2)
 	manager.InjectFault(terminal.FaultKilled)
-	if _, err := manager.Create(context.Background(), "", 80, 24); !errors.Is(err, terminal.ErrIO) {
+	if _, err := manager.Create(context.Background(), "", "", 80, 24); !errors.Is(err, terminal.ErrIO) {
 		t.Fatalf("create 错误=%v，期望 ErrIO", err)
 	}
-	if listed := manager.List(); len(listed) != 0 {
+	if listed := manager.List(""); len(listed) != 0 {
 		t.Fatalf("故障下不应登记会话: %+v", listed)
 	}
 }
@@ -27,7 +27,7 @@ func TestKilledCreateRejected(t *testing.T) {
 // TestKilledSessionBySignal 用真实 SIGKILL 杀 shell，断言读到 eof、写入回 ErrClosed。
 func TestKilledSessionBySignal(t *testing.T) {
 	manager := newManager(t, 2)
-	info, err := manager.Create(context.Background(), "", 80, 24)
+	info, err := manager.Create(context.Background(), "", "", 80, 24)
 	if err != nil {
 		t.Fatalf("create 失败: %v", err)
 	}
@@ -35,13 +35,13 @@ func TestKilledSessionBySignal(t *testing.T) {
 		t.Fatalf("kill 会话进程失败: %v", err)
 	}
 	waitEOF(t, manager, info.SessionID, 5*time.Second)
-	if _, err := manager.Write(context.Background(), info.SessionID, []byte("echo x\n")); !errors.Is(err, terminal.ErrClosed) {
+	if _, err := manager.Write(context.Background(), "", info.SessionID, []byte("echo x\n")); !errors.Is(err, terminal.ErrClosed) {
 		t.Fatalf("kill 后写入错误=%v，期望 ErrClosed", err)
 	}
-	if err := manager.Close(context.Background(), info.SessionID); err != nil {
+	if err := manager.Close(context.Background(), "", info.SessionID); err != nil {
 		t.Fatalf("kill 后 close 失败: %v", err)
 	}
-	if listed := manager.List(); len(listed) != 0 {
+	if listed := manager.List(""); len(listed) != 0 {
 		t.Fatalf("close 后仍有会话: %+v", listed)
 	}
 }
@@ -50,21 +50,21 @@ func TestKilledSessionBySignal(t *testing.T) {
 // 但 close 仍可执行——清理路径不能被故障阻断。
 func TestInjectedKillBlocksSessionIO(t *testing.T) {
 	manager := newManager(t, 2)
-	info, err := manager.Create(context.Background(), "", 80, 24)
+	info, err := manager.Create(context.Background(), "", "", 80, 24)
 	if err != nil {
 		t.Fatalf("create 失败: %v", err)
 	}
 	manager.InjectFault(terminal.FaultKilled)
-	if _, err := manager.Read(context.Background(), info.SessionID, 1024); !errors.Is(err, terminal.ErrClosed) {
+	if _, err := manager.Read(context.Background(), "", info.SessionID, nil, 1024); !errors.Is(err, terminal.ErrClosed) {
 		t.Fatalf("read 错误=%v，期望 ErrClosed", err)
 	}
-	if _, err := manager.Write(context.Background(), info.SessionID, []byte("x")); !errors.Is(err, terminal.ErrClosed) {
+	if _, err := manager.Write(context.Background(), "", info.SessionID, []byte("x")); !errors.Is(err, terminal.ErrClosed) {
 		t.Fatalf("write 错误=%v，期望 ErrClosed", err)
 	}
-	if err := manager.Resize(context.Background(), info.SessionID, 100, 40); !errors.Is(err, terminal.ErrClosed) {
+	if err := manager.Resize(context.Background(), "", info.SessionID, 100, 40); !errors.Is(err, terminal.ErrClosed) {
 		t.Fatalf("resize 错误=%v，期望 ErrClosed", err)
 	}
-	if err := manager.Close(context.Background(), info.SessionID); err != nil {
+	if err := manager.Close(context.Background(), "", info.SessionID); err != nil {
 		t.Fatalf("故障下 close 失败: %v", err)
 	}
 	waitPidGone(t, info.PID, 3*time.Second)
@@ -79,9 +79,9 @@ func TestKillFaultNoPanic(t *testing.T) {
 	}()
 	manager := newManager(t, 2)
 	manager.InjectFault(terminal.FaultKilled)
-	_, _ = manager.Create(context.Background(), "", 80, 24)
-	_, _ = manager.Read(context.Background(), "t-missing", 1024)
-	_, _ = manager.Write(context.Background(), "t-missing", []byte("x"))
-	_ = manager.Resize(context.Background(), "t-missing", 80, 24)
-	_ = manager.Close(context.Background(), "t-missing")
+	_, _ = manager.Create(context.Background(), "", "", 80, 24)
+	_, _ = manager.Read(context.Background(), "", "t-missing", nil, 1024)
+	_, _ = manager.Write(context.Background(), "", "t-missing", []byte("x"))
+	_ = manager.Resize(context.Background(), "", "t-missing", 80, 24)
+	_ = manager.Close(context.Background(), "", "t-missing")
 }

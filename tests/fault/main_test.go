@@ -30,7 +30,7 @@ func waitEOF(t *testing.T, manager *terminal.Manager, id string, timeout time.Du
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		result, err := manager.Read(context.Background(), id, 64<<10)
+		result, err := manager.Read(context.Background(), "", id, nil, 64<<10)
 		if err != nil {
 			t.Fatalf("读取会话失败: %v", err)
 		}

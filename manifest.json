@@ -1,9 +1,10 @@
 {
   "id": "terminal",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "protocol": "kore.plugin.v1",
   "requires_kore": ">=0.1.0 <0.2.0",
   "capabilities": [
+    "system:read",
     "system:admin",
     "proc:write"
   ]

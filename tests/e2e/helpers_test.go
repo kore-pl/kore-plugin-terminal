@@ -36,16 +36,18 @@ func buildPlugin(t *testing.T) string {
 }
 
 // startPlugin 以协议环境变量启动插件进程；stderr 收集起来便于失败时定位。
-func startPlugin(t *testing.T, binary, socket string, maxSessions int) (*exec.Cmd, *bytes.Buffer) {
+// extraEnv 追加覆盖项（如 KORE_STATE_DIR 用于命令历史、KORE_TERMINAL_IDLE_SEC 用于回收）。
+func startPlugin(t *testing.T, binary, socket string, maxSessions int, extraEnv ...string) (*exec.Cmd, *bytes.Buffer) {
 	t.Helper()
 	stderr := &bytes.Buffer{}
 	process := exec.Command(binary)
-	process.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"KORE_PLUGIN_SOCK="+socket,
 		"KORE_PLUGIN_ID=terminal",
 		"KORE_PLUGIN_TOKEN=e2e-token",
 		"KORE_TERMINAL_MAX_SESSIONS="+strconv.Itoa(maxSessions),
 	)
+	process.Env = append(env, extraEnv...)
 	process.Stdout = io.Discard
 	process.Stderr = stderr
 	if err := process.Start(); err != nil {

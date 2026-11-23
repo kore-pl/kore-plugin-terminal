@@ -13,12 +13,8 @@ import (
 	"time"
 )
 
-// 读写与关闭的等待预算。
+// 关闭等待预算。
 const (
-	// writeWaitTimeout 是单次等待 PTY 可写的时间；缓冲区满时 100ms 后回 ErrTimeout。
-	writeWaitTimeout = 100 * time.Millisecond
-	// writeAttempts 是写循环的最大轮次，防止异常 fd 上无限重试。
-	writeAttempts = 64
 	// closeWaitTimeout 是 kill 后等待进程退出的时间，超时再补一刀。
 	closeWaitTimeout = 3 * time.Second
 	// closeKillTimeout 是补刀后的最终等待时间。
@@ -26,19 +22,30 @@ const (
 )
 
 // Session 是一个 PTY 会话：master fd 归本进程，slave fd 交给登录 shell。
+//
+// 会话绑定创建者（owner/client_id）：读写/关闭/attach 必须携带同一标识，
+// 越权一律 ErrForbidden（实现位置见 checkOwner 与 Manager.session）。
 type Session struct {
-	id     string
-	shell  string
-	pid    int
-	pgid   int
-	fd     int
+	// id / owner 在创建后不可变，无需加锁读取。
+	id    string
+	owner string
+	shell string
+	pid   int
+	pgid  int
+	fd    int
+
 	master *os.File
+
+	readMu sync.Mutex // 串行化读取，保证 offset/tail 与 PTY 读一致
 
 	mu         sync.Mutex
 	cols       int
 	rows       int
 	createdAt  time.Time
 	lastActive time.Time
+	offset     uint64 // 已交付字节总数，单调递增，作为读游标
+	tail       []byte // 最近交付字节（重连补读窗口）
+	tailCap    int
 	eof        bool
 	exited     bool
 	exitCode   int
@@ -49,7 +56,7 @@ type Session struct {
 }
 
 // startSession 启动登录 shell 并接管 PTY master。
-func startSession(id, shellPath string, pair ptyPair, cols, rows int, now time.Time) (*Session, error) {
+func startSession(id, owner, shellPath string, pair ptyPair, cols, rows, replayBytes int, now time.Time) (*Session, error) {
 	if err := setWinsize(pair.masterFD, cols, rows); err != nil {
 		pair.close()
 		return nil, fmt.Errorf("%w: 设置窗口大小: %v", ErrIO, err)
@@ -67,8 +74,8 @@ func startSession(id, shellPath string, pair ptyPair, cols, rows int, now time.T
 	}
 	pair.closeSlave()
 	session := &Session{
-		id: id, shell: shellPath, pid: cmd.Process.Pid, pgid: cmd.Process.Pid,
-		fd: pair.masterFD, master: pair.master,
+		id: id, owner: owner, shell: shellPath, pid: cmd.Process.Pid, pgid: cmd.Process.Pid,
+		fd: pair.masterFD, master: pair.master, tailCap: replayBytes,
 		cols: cols, rows: rows, createdAt: now, lastActive: now,
 		done: make(chan struct{}),
 	}
@@ -107,15 +114,27 @@ func (s *Session) wait(cmd *exec.Cmd) {
 	close(s.done)
 }
 
+// checkOwner 校验调用方是否为会话创建者；不一致返回 ErrForbidden（越权 attach 的落点）。
+func (s *Session) checkOwner(clientID string) error {
+	if s.owner == clientID {
+		return nil
+	}
+	return fmt.Errorf("%w（会话 %s 归属 %q）", ErrForbidden, s.id, s.owner)
+}
+
 // info 返回会话快照。
 func (s *Session) info() Info {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.infoLocked()
+}
+
+// infoLocked 在持锁路径构造快照。
+func (s *Session) infoLocked() Info {
 	return Info{
-		SessionID: s.id, Shell: s.shell, PID: s.pid, Cols: s.cols, Rows: s.rows,
-		CreatedAt:  s.createdAt.Format(time.RFC3339Nano),
-		LastActive: s.lastActive.Format(time.RFC3339Nano),
-		EOF:        s.eof,
+		SessionID: s.id, ClientID: s.owner, Shell: s.shell, PID: s.pid, Cols: s.cols, Rows: s.rows,
+		CreatedAt: s.createdAt.Format(time.RFC3339Nano), LastActive: s.lastActive.Format(time.RFC3339Nano),
+		Cursor: s.offset, EOF: s.eof,
 	}
 }
 
@@ -133,90 +152,21 @@ func (s *Session) lastActiveTime() time.Time {
 	return s.lastActive
 }
 
-// isEOF 返回会话是否已读完退出。
-func (s *Session) isEOF() bool {
+// cursorState 返回当前游标与补读窗口下界（重连续读的判据）。
+func (s *Session) cursorState() (offset uint64, windowStart uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.eof
+	return s.offset, s.offset - uint64(len(s.tail))
 }
 
-// read 增量读取 master：select 零超时探活，读空即返回；EIO 视为 shell 退出。
-func (s *Session) read(maxBytes int) (ReadResult, error) {
+// attach 刷新活跃时间并返回 attach 快照；游标可恢复性在 Manager.Attach 校验。
+func (s *Session) attach(now time.Time) Attached {
 	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return ReadResult{}, ErrClosed
+	defer s.mu.Unlock()
+	s.lastActive = now
+	return Attached{
+		Info: s.infoLocked(), Cursor: s.offset, ReplayBytes: len(s.tail),
 	}
-	if s.eof {
-		s.mu.Unlock()
-		return ReadResult{EOF: true}, nil
-	}
-	fd := s.fd
-	s.mu.Unlock()
-
-	buf := make([]byte, maxBytes)
-	read := 0
-	for read < maxBytes {
-		readable, err := waitFD(fd, false, 0)
-		if err != nil {
-			return ReadResult{}, fmt.Errorf("%w: 等待可读: %v", ErrIO, err)
-		}
-		if !readable {
-			break // 当前没有输出：增量语义返回空串，不阻塞
-		}
-		n, rerr := syscall.Read(fd, buf[read:])
-		if n > 0 {
-			read += n
-			continue
-		}
-		if rerr == syscall.EAGAIN || rerr == syscall.EWOULDBLOCK {
-			break
-		}
-		if rerr == syscall.EIO || rerr == nil {
-			s.markEOF()
-			return ReadResult{Data: buf[:read], EOF: true}, nil
-		}
-		return ReadResult{}, fmt.Errorf("%w: 读取 PTY: %v", ErrIO, rerr)
-	}
-	return ReadResult{Data: buf[:read], EOF: s.isEOF()}, nil
-}
-
-// write 写 master（即 shell 的 stdin）：可写等待 100ms，缓冲满回 ErrTimeout。
-func (s *Session) write(data []byte) (int, error) {
-	s.mu.Lock()
-	if s.closed || s.eof || s.exited {
-		s.mu.Unlock()
-		return 0, ErrClosed
-	}
-	fd := s.fd
-	s.mu.Unlock()
-
-	written := 0
-	for attempt := 0; attempt < writeAttempts && written < len(data); attempt++ {
-		writable, err := waitFD(fd, true, writeWaitTimeout)
-		if err != nil {
-			return written, fmt.Errorf("%w: 等待可写: %v", ErrIO, err)
-		}
-		if !writable {
-			return written, ErrTimeout
-		}
-		n, werr := syscall.Write(fd, data[written:])
-		if n > 0 {
-			written += n
-			continue
-		}
-		if werr == syscall.EAGAIN || werr == syscall.EWOULDBLOCK {
-			continue
-		}
-		if werr == syscall.EIO || werr == nil {
-			return written, ErrClosed
-		}
-		return written, fmt.Errorf("%w: 写入 PTY: %v", ErrIO, werr)
-	}
-	if written < len(data) {
-		return written, ErrTimeout
-	}
-	return written, nil
 }
 
 // resize 调整窗口尺寸并记录生效值。
@@ -239,6 +189,13 @@ func (s *Session) markEOF() {
 	s.mu.Lock()
 	s.eof = true
 	s.mu.Unlock()
+}
+
+// isEOF 返回会话是否已读完退出。
+func (s *Session) isEOF() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.eof
 }
 
 // Close 关闭会话：kill(-pgid) 保证子进程树全退，然后关 fd。
