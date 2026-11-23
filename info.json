@@ -1,7 +1,7 @@
 {
   "id": "terminal",
   "name": "Web 终端插件",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "protocol": "kore.plugin.v1",
   "lifecycle": "resident",
   "depth_level": "production",
@@ -24,5 +24,5 @@
   "depends_on": [],
   "conflicts": [],
   "scenario_tags": ["ops"],
-  "size_bytes": 1499784
+  "size_bytes": 1522790
 }

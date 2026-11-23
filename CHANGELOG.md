@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 (2026-11-23)
+
+- test(fault): 补齐 G-20 故障注入——`attach` / `history` / `history.clear` 三个新方法此前零 fault 覆盖。新增 `tests/fault/reconnect_history_test.go`：`attach` 在 kill / timeout / cgroup 注入下回 `ErrClosed` / `ErrTimeout` / `ErrResource` 且不阻塞、清除故障后可重连、关闭后 pid 回收；非法游标回 `ErrCursorExpired` / `ErrInvalid`、越权回 `ErrForbidden`；历史文件损坏时 `Query` / `Clear` 均报错且损坏文件原样保留（不自动重置）；历史目录不可写时 `Clear` 报错且磁盘文件字节不变（不假报成功）
+- build: 版本 0.2.0 → 0.2.1（仅测试与版本，无运行时行为变更），`info.json` / `manifest.json` 同步
+
 ## 0.2.0 (2026-11-23)
 
 - feat(capability): `info.json` 声明 **方法级 `method_capabilities`**（§3.5 #12）——`list` / `read` / `attach` / `history` → `system:read`，`create` / `write` / `resize` / `close` / `history.clear` → `system:admin`；只读方法不再进写审计，插件级 capabilities 同步补 `system:read`
