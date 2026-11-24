@@ -17,6 +17,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -41,8 +42,8 @@ func TestFDExhaustionUlimitReal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("定位测试二进制失败: %v", err)
 	}
-	cmd := exec.Command("/bin/sh", "-c",
-		`ulimit -n 64; exec "$0" -test.run '^TestFDExhaustionHelper$' -test.v`, bin)
+	// 不写死 `ulimit -n 64`：绝对预算会随继承 fd 漂移，helper 改为按自身 fd 表收紧。
+	cmd := exec.Command(bin, "-test.run", "^TestFDExhaustionHelper$", "-test.v")
 	cmd.Env = append(os.Environ(), envFDHelper+"=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -53,17 +54,65 @@ func TestFDExhaustionUlimitReal(t *testing.T) {
 	}
 }
 
+// dropInheritedFDs 关闭从外层 shell / make 链继承来的 fd（fd ≥ 3 且未置 FD_CLOEXEC）。
+//
+// 预算按「自身已开 fd + headroom」计算，继承 fd 虽已计入总数，却会挤占 Go runtime /
+// race detector 可能懒创建的余量；外层嵌套越深（make check → sh → make → go test），
+// 继承 fd 越多，余量越不可预测。关掉之后 fd 表只由本进程决定，预算与宿主继承 fd、
+// shell 层数彻底解耦。Go 自己开的 fd 一律带 FD_CLOEXEC，不会被误关。
+func dropInheritedFDs(t *testing.T) {
+	t.Helper()
+	ents, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatalf("读取自身 fd 表失败: %v", err)
+	}
+	dropped := 0
+	for _, ent := range ents {
+		fd, convErr := strconv.Atoi(ent.Name())
+		if convErr != nil || fd < 3 {
+			continue
+		}
+		flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_GETFD, 0)
+		if errno != 0 || flags&syscall.FD_CLOEXEC != 0 {
+			continue
+		}
+		if closeErr := syscall.Close(fd); closeErr == nil {
+			dropped++
+		}
+	}
+	t.Logf("关闭继承 fd %d 个（预算只按本进程 fd 表计算）", dropped)
+}
+
 // TestFDExhaustionHelper 在 ulimit -n 约束下循环 create，直到 PTY/exec 拿不到 fd。
 func TestFDExhaustionHelper(t *testing.T) {
 	if os.Getenv(envFDHelper) == "" {
 		t.Skip("仅由 TestFDExhaustionUlimitReal 以 ulimit -n 启动")
 	}
+	// 预算相对自身已开 fd（不写死绝对数）：每个会话要吃掉 pty 主从 + 管道 + socketpair，
+	// 余量取 32 才能真的创建出几个会话再撞 EMFILE，而不是一开始就 0 个。
+	dropInheritedFDs(t)
+	var orig syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &orig); err != nil {
+		t.Fatalf("读取 RLIMIT_NOFILE 失败: %v", err)
+	}
+	ents, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatalf("读取自身 fd 表失败: %v", err)
+	}
+	const headroom = 32
+	budget := uint64(len(ents)) + headroom
+	if budget > orig.Max {
+		t.Fatalf("预算 %d 超过外层硬限 %d：环境把 RLIMIT_NOFILE 压得过低", budget, orig.Max)
+	}
+	if err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &syscall.Rlimit{Cur: budget, Max: orig.Max}); err != nil {
+		t.Fatalf("收紧 RLIMIT_NOFILE 到 %d 失败: %v", budget, err)
+	}
 	var limit syscall.Rlimit
 	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &limit); err != nil {
 		t.Fatalf("读取 RLIMIT_NOFILE 失败: %v", err)
 	}
-	if limit.Cur > 128 {
-		t.Fatalf("ulimit -n 未生效：soft=%d", limit.Cur)
+	if limit.Cur != budget {
+		t.Fatalf("RLIMIT_NOFILE 回读=%d，期望预算 %d（预算未生效）", limit.Cur, budget)
 	}
 
 	manager := terminal.New(terminal.Options{
