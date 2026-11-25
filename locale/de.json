@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Web-Terminal-Plugin",
+    "description": "Ein Web-Terminal-Plugin für kore: jede Sitzung ist ein echtes PTY mit einer Login-Shell; Schreiben bedeutet Tastatureingaben, Lesen bedeutet Terminalausgabe (einschließlich Escape-Sequenzen), bereit für ein Frontend wie xterm.js. Seit 0.2.0 bietet es Methoden-Capabilities, einen pro Sitzung persistierten Befehlsverlauf und Wiederverbindung über Lesecursor.",
+    "detail": "docs/DETAIL.de.md"
+  }
+}

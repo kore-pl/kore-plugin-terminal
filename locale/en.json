@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Web terminal plugin",
+    "description": "A web terminal plugin for kore: every session is a real PTY plus a login shell; writing means keystrokes and reading means terminal output (including escape sequences), ready for a front-end such as xterm.js. Since 0.2.0 it adds method-level capabilities, per-session persisted command history, and reconnectable read cursors.",
+    "detail": "docs/DETAIL.en.md"
+  }
+}

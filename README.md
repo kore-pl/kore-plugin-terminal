@@ -1,5 +1,7 @@
 # kore-plugin-terminal
 
+语言：[简体中文](docs/DETAIL.md) · [English](docs/DETAIL.en.md) · [Español](docs/DETAIL.es.md) · [Français](docs/DETAIL.fr.md) · [Deutsch](docs/DETAIL.de.md) · [Русский](docs/DETAIL.ru.md) · [Português](docs/DETAIL.pt.md)
+
 kore 的 Web 终端插件（生产级）：每个会话是一个**真实 PTY + 登录 shell**，不是命令
 执行包装器。写入即键盘输入，读取即终端输出（含转义序列），前端直接用 xterm.js 之类的
 终端模拟器对接即可。
@@ -239,5 +241,7 @@ MIT License — pengtang1024
 - **验证方式**：本地 `make check` 优先（GitHub CI 只手动触发，Gitea CI 按版本 tag 触发；发布前 `make dist` 连跑两次核对 sha 一致）。
 - **发布产物**：`make dist` → `dist/terminal-0.2.1.tar.gz` + `.sha256`（位级可复现，连跑两次 sha 相同）。
 - **相关仓库**：[索引 kore-plugins](https://github.com/kore-pl/kore-plugins) · [协议文档](https://github.com/kore-pl/kore/blob/main/docs/PLUGIN-PROTOCOL.md) · [SDK 指南](https://github.com/kore-pl/kore/blob/main/docs/PLUGIN-SDK.md)
+
+如果你觉得这个终端插件好用，欢迎给本仓库点个 ⭐ Star，让更多人看到它。
 
 <!-- oss:end -->

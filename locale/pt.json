@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Plugin de terminal web",
+    "description": "Um plugin de terminal web para o kore: cada sessão é um PTY real com um shell de login; escrever significa enviar teclas e ler significa obter a saída do terminal (incluindo sequências de escape), pronto para um front-end como o xterm.js. Desde a versão 0.2.0, adiciona permissões por método, histórico de comandos persistido por sessão e reconexão por cursores de leitura.",
+    "detail": "docs/DETAIL.pt.md"
+  }
+}
